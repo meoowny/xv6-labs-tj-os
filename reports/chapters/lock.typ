@@ -211,26 +211,26 @@
 
 + 接下来在 `kernel/bio.c` 中添加用于实现缓冲区哈希表机制的数据结构
   + 定义结构体 `bucket` 与全局哈希表 `hashtable`：
-  #blockquote[
-  ```c
-  struct bucket {
-    struct spinlock lock;  // 自旋锁，用于保护对该桶的并发访问
-    struct buf head;       // 缓冲区指针，用于构建 LRU 缓冲区的链表
-  } hashtable[NBUF];
-  ```
-  ]
+    #blockquote[
+    ```c
+    struct bucket {
+      struct spinlock lock;  // 自旋锁，用于保护对该桶的并发访问
+      struct buf head;       // 缓冲区指针，用于构建 LRU 缓冲区的链表
+    } hashtable[NBUF];
+    ```
+    ]
   + 添加需要的宏定义与哈希函数，用于完成从块号到哈希索引的转换：
-  #blockquote[
-  ```c
-  #define NBUCKET 13
+    #blockquote[
+    ```c
+    #define NBUCKET 13
 
-  int
-  hash(uint dev, uint blockno)
-  {
-    return blockno % NBUCKET;
-  }
-  ```
-  ]
+    int
+    hash(uint dev, uint blockno)
+    {
+      return blockno % NBUCKET;
+    }
+    ```
+    ]
 
 + 修改 `kernel/bio.c` 的 `binit()` 函数，完成对哈希表的初始化：
   #blockquote[
@@ -264,107 +264,107 @@
   ]
 + 修改 `bget()` 函数：
   + 先通过索引获取锁：
-  #blockquote[
-  ```c
-  int index = hash(blockno);
-  struct bucket* bucket = &hashtable[index];
-  acquire(&bucket->lock);
-  ```]
+    #blockquote[
+    ```c
+    int index = hash(blockno);
+    struct bucket* bucket = &hashtable[index];
+    acquire(&bucket->lock);
+    ```]
   + 在对应桶中查找是否有空闲块，如果当前桶中没有则在其他桶中查找，如果找到则直接返回：
-  #blockquote[
-  ```c
-  // Is the block already cached?
-  for(b = bucket->head.next; b != 0; b = b->next){
-    if(b->dev == dev && b->blockno == blockno){
-      // 当前块已缓存则直接返回
-      b->refcnt++;
-      release(&bucket->lock);
-      acquiresleep(&b->lock);
-      return b;
-    }
-  }
-  release(&bucket->lock);
-
-  // 在其他桶中查看当前当前块是否已缓存
-  acquire(&bcache.lock);
-  for (b = bucket->head.next; b != 0; b = b->next) {
-    if (b->dev == dev && b->blockno == blockno) {
-      // 已缓存则直接返回
-      acquire(&bucket->lock);
-      b->refcnt++;
-      release(&bucket->lock);
-      release(&bcache.lock);
-
-      acquiresleep(&b->lock);
-      return b;
-    }
-  }
-  ```]
-  + 没有找到就需要在全局数组中查找最久未使用过的一个空闲块：
-  #blockquote[
-  ```c
-  // Not cached.
-  // Recycle the least recently used (LRU) unused buffer.
-  struct buf *min_b = 0;
-  uint min_time = ~0;
-  uint cur_bucket = -1;
-
-  for (int i = 0; i < NBUCKET; i++) {
-    acquire(&hashtable[i].lock);
-
-    int found = 0;
-    for (b = hashtable[i].head; b->next != 0; b = b->next) {
-      if (b->next->refcnt == 0 && (min_b == 0 || b->next->timestamp < min_time)) {
-        // 首次找到空闲缓冲区或找到更早使用过的缓冲区
-        min_b = b;
-        min_time = b->next->timestamp;
-        found = 1;
+    #blockquote[
+    ```c
+    // Is the block already cached?
+    for(b = bucket->head.next; b != 0; b = b->next){
+      if(b->dev == dev && b->blockno == blockno){
+        // 当前块已缓存则直接返回
+        b->refcnt++;
+        release(&bucket->lock);
+        acquiresleep(&b->lock);
+        return b;
       }
     }
+    release(&bucket->lock);
 
-    if (found) {
-      if (cur_bucket != -1)
-        release(&hashtable[cur_bucket].lock);
-      cur_bucket = i;
+    // 在其他桶中查看当前当前块是否已缓存
+    acquire(&bcache.lock);
+    for (b = bucket->head.next; b != 0; b = b->next) {
+      if (b->dev == dev && b->blockno == blockno) {
+        // 已缓存则直接返回
+        acquire(&bucket->lock);
+        b->refcnt++;
+        release(&bucket->lock);
+        release(&bcache.lock);
+
+        acquiresleep(&b->lock);
+        return b;
+      }
     }
-    else {
-      release(&hashtable[i].lock);
+    ```]
+  + 没有找到就需要在全局数组中查找最久未使用过的一个空闲块：
+    #blockquote[
+    ```c
+    // Not cached.
+    // Recycle the least recently used (LRU) unused buffer.
+    struct buf *min_b = 0;
+    uint min_time = ~0;
+    uint cur_bucket = -1;
+
+    for (int i = 0; i < NBUCKET; i++) {
+      acquire(&hashtable[i].lock);
+
+      int found = 0;
+      for (b = hashtable[i].head; b->next != 0; b = b->next) {
+        if (b->next->refcnt == 0 && (min_b == 0 || b->next->timestamp < min_time)) {
+          // 首次找到空闲缓冲区或找到更早使用过的缓冲区
+          min_b = b;
+          min_time = b->next->timestamp;
+          found = 1;
+        }
+      }
+
+      if (found) {
+        if (cur_bucket != -1)
+          release(&hashtable[cur_bucket].lock);
+        cur_bucket = i;
+      }
+      else {
+        release(&hashtable[i].lock);
+      }
     }
-  }
-  ```]
+    ```]
   + 最后如果找到空闲块则释放桶与哈希表的自旋锁，获取该缓冲区的休眠锁，并返回该缓冲区，没找到则发出 `panic`：
-  #blockquote[
-  ```c
-  if (min_b) {
-    struct buf* p = min_b->next;
+    #blockquote[
+    ```c
+    if (min_b) {
+      struct buf* p = min_b->next;
 
-    if (cur_bucket != index) {
-      // 删除 min_b 节点
-      min_b->next = p->next;
-      release(&hashtable[cur_bucket].lock);
+      if (cur_bucket != index) {
+        // 删除 min_b 节点
+        min_b->next = p->next;
+        release(&hashtable[cur_bucket].lock);
 
-      // 将 min_b 节点加入到当前桶中
-      acquire(&hashtable[index].lock);
-      p->next = hashtable[index].head.next;
-      hashtable[index].head.next = p;
+        // 将 min_b 节点加入到当前桶中
+        acquire(&hashtable[index].lock);
+        p->next = hashtable[index].head.next;
+        hashtable[index].head.next = p;
+      }
+
+      p->dev = dev;
+      p->blockno = blockno;
+      p->refcnt = 1;
+      p->valid = 0;
+      p->bucketno = index;
+
+      release(&hashtable[index].lock);
+      release(&bcache.lock);
+
+      acquiresleep(&p->lock);
+      return p;
     }
 
-    p->dev = dev;
-    p->blockno = blockno;
-    p->refcnt = 1;
-    p->valid = 0;
-    p->bucketno = index;
-
-    release(&hashtable[index].lock);
-    release(&bcache.lock);
-
-    acquiresleep(&p->lock);
-    return p;
-  }
-
-  panic("bget: no buffers");
-  ```
-  ]
+    panic("bget: no buffers");
+    ```
+    ]
 + 修改 `kernel/bio.c` 的 `brelse` 函数，释放之前在 `bget()` 中调用的睡眠锁，减少 `refcnt` 即可。如果一个块引用数为 0，则需要将 `timestamp` 改为最近使用时间：
   #blockquote[
   ```c

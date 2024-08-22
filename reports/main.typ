@@ -7,7 +7,7 @@
   date: datetime(year: 2024, month: 08, day: 21),
   date-format: "[year]年[month]月[day]日",
   abstract: [2021 版 xv6 及 Labs 课程项目实验，\ 代码放在 #link("https://github.com/meoowny/xv6-labs-tj-os")[https://github.com/meoowny/xv6-labs-tj-os] 仓库下],
-  // preface: [ ],
+  preface: [],
   // figure-index: (enabled: true),
   // table-index: (enabled: true),
   // listing-index: (enabled: true),
@@ -33,6 +33,9 @@
 #show heading.where(level: 1): set heading(numbering: "第一章")
 #set enum(numbering: "1.A.a)", full: true)
 #set par(justify: true, first-line-indent: 2em, leading: 1em)
+
+#pagebreak(to: "odd")
+#counter(page).update(1)
 
 // #include "./style-ref.typ"
 
